@@ -1,0 +1,415 @@
+import csv
+import ast
+from pathlib import Path
+
+
+# ============================================================
+# 1. FIND PROJECT AND DATASET
+# ============================================================
+
+# This file is:
+# cinevault/backend/controllers/aidatapreparation.py
+#
+# parents[0] = controllers
+# parents[1] = backend
+# parents[2] = cinevault
+
+CURRENT_FILE = Path(__file__).resolve()
+PROJECT_ROOT = CURRENT_FILE.parents[1]
+DATASET_DIR = PROJECT_ROOT / "dataset"
+
+INPUT_FILE = DATASET_DIR / "movies_cleaned.csv"
+OUTPUT_FILE = DATASET_DIR / "movies_ai_prepared.csv"
+
+
+# ============================================================
+# 2. CLEAN TEXT
+# ============================================================
+
+def clean_text(value):
+    """
+    Convert a value into clean lowercase text.
+    """
+
+    if value is None:
+        return ""
+
+    value = str(value).strip().lower()
+
+    # Remove extra spaces
+    value = " ".join(value.split())
+
+    return value
+
+
+# ============================================================
+# 3. CLEAN LIST-LIKE DATA
+# ============================================================
+
+def clean_list(value):
+    """
+    Handles values such as:
+
+    ['Action', 'Drama']
+    Action, Drama
+    Action|Drama
+
+    and converts them into simple text.
+    """
+
+    if value is None:
+        return ""
+
+    value = str(value).strip()
+
+    if not value:
+        return ""
+
+    # Try Python-list format
+    try:
+        parsed = ast.literal_eval(value)
+
+        if isinstance(parsed, list):
+            items = []
+
+            for item in parsed:
+                item = clean_text(item)
+
+                if item:
+                    items.append(item)
+
+            return " ".join(items)
+
+    except (ValueError, SyntaxError):
+        pass
+
+    # Handle pipe-separated values
+    if "|" in value:
+        parts = value.split("|")
+
+    # Handle comma-separated values
+    elif "," in value:
+        parts = value.split(",")
+
+    else:
+        parts = [value]
+
+    parts = [
+        clean_text(part)
+        for part in parts
+        if clean_text(part)
+    ]
+
+    return " ".join(parts)
+
+
+# ============================================================
+# 4. GET COLUMN VALUE SAFELY
+# ============================================================
+
+def get_value(movie, possible_names):
+    """
+    Find a column even if its capitalization is different.
+    """
+
+    movie_keys = {
+        str(key).strip().lower(): key
+        for key in movie.keys()
+    }
+
+    for name in possible_names:
+
+        key = movie_keys.get(name.lower())
+
+        if key is not None:
+            return movie.get(key, "")
+
+    return ""
+
+
+# ============================================================
+# 5. PREPARE ONE MOVIE
+# ============================================================
+
+def prepare_movie(movie):
+
+    title = clean_text(
+        get_value(movie, ["title", "movie_title", "name"])
+    )
+
+    genres = clean_list(
+        get_value(movie, ["genres", "genre"])
+    )
+
+    director = clean_text(
+        get_value(movie, ["director", "directors"])
+    )
+
+    cast = clean_list(
+        get_value(movie, ["cast", "actors", "stars"])
+    )
+
+    description = clean_text(
+        get_value(
+            movie,
+            [
+                "description",
+                "plot",
+                "overview",
+                "summary"
+            ]
+        )
+    )
+
+    language = clean_text(
+        get_value(
+            movie,
+            [
+                "language",
+                "languages"
+            ]
+        )
+    )
+
+    # --------------------------------------------------------
+    # Combine important movie information
+    # --------------------------------------------------------
+
+    combined_features = " ".join(
+        part
+        for part in [
+            genres,
+            director,
+            cast,
+            description,
+            language
+        ]
+        if part
+    )
+
+    return {
+        "title": title,
+        "genres": genres,
+        "director": director,
+        "cast": cast,
+        "description": description,
+        "language": language,
+        "combined_features": combined_features
+    }
+
+
+# ============================================================
+# 6. CHECK DATASET
+# ============================================================
+
+def check_dataset():
+
+    print()
+    print("=" * 60)
+    print("CINEVAULT AI DATA PREPARATION")
+    print("=" * 60)
+
+    print()
+    print("Python file:")
+    print(CURRENT_FILE)
+
+    print()
+    print("Project root:")
+    print(PROJECT_ROOT)
+
+    print()
+    print("Dataset folder:")
+    print(DATASET_DIR)
+
+    print()
+    print("Input file:")
+    print(INPUT_FILE)
+
+    print()
+
+    if not DATASET_DIR.exists():
+
+        print("❌ DATASET FOLDER NOT FOUND")
+        print()
+        print("Expected:")
+        print(DATASET_DIR)
+        print()
+        return False
+
+    if not INPUT_FILE.exists():
+
+        print("❌ movies_cleaned.csv NOT FOUND")
+        print()
+        print("Expected:")
+        print(INPUT_FILE)
+        print()
+        print("Files actually inside dataset folder:")
+
+        for file in DATASET_DIR.iterdir():
+            print("   ", file.name)
+
+        print()
+
+        return False
+
+    print("✅ Dataset folder found")
+    print("✅ movies_cleaned.csv found")
+
+    return True
+
+
+# ============================================================
+# 7. PREPARE DATASET
+# ============================================================
+
+def prepare_dataset():
+
+    prepared_movies = []
+
+    print()
+    print("Reading dataset...")
+
+    with open(
+        INPUT_FILE,
+        "r",
+        encoding="utf-8-sig",
+        newline=""
+    ) as file:
+
+        reader = csv.DictReader(file)
+
+        print()
+        print("Columns found in CSV:")
+
+        if reader.fieldnames:
+            for column in reader.fieldnames:
+                print("   ", column)
+
+        print()
+        print("Preparing movies...")
+
+        for movie in reader:
+
+            prepared_movie = prepare_movie(movie)
+
+            # Only keep records that have a title
+            if prepared_movie["title"]:
+
+                prepared_movies.append(prepared_movie)
+
+    return prepared_movies
+
+
+# ============================================================
+# 8. SAVE PREPARED DATASET
+# ============================================================
+
+def save_dataset(movies):
+
+    fieldnames = [
+        "title",
+        "genres",
+        "director",
+        "cast",
+        "description",
+        "language",
+        "combined_features"
+    ]
+
+    with open(
+        OUTPUT_FILE,
+        "w",
+        encoding="utf-8",
+        newline=""
+    ) as file:
+
+        writer = csv.DictWriter(
+            file,
+            fieldnames=fieldnames
+        )
+
+        writer.writeheader()
+
+        writer.writerows(movies)
+
+
+# ============================================================
+# 9. PRINT SUMMARY
+# ============================================================
+
+def print_summary(movies):
+
+    print()
+    print("=" * 60)
+    print("AI DATA PREPARATION COMPLETE")
+    print("=" * 60)
+
+    print()
+    print("Movies processed:", len(movies))
+
+    print()
+    print("Output file:")
+    print(OUTPUT_FILE)
+
+    print()
+
+    if movies:
+
+        print("Sample prepared movie:")
+        print("-" * 60)
+
+        sample = movies[0]
+
+        for key, value in sample.items():
+
+            print(f"{key}: {value[:200]}")
+
+    print()
+    print("=" * 60)
+    print("✅ READY FOR MEMBER 2 - AI RECOMMENDATION MODEL")
+    print("=" * 60)
+    print()
+
+
+# ============================================================
+# 10. MAIN
+# ============================================================
+
+def main():
+
+    if not check_dataset():
+        return
+
+    try:
+
+        movies = prepare_dataset()
+
+        if not movies:
+
+            print()
+            print("❌ No movies were prepared.")
+            print("Check the column names in your CSV.")
+            return
+
+        save_dataset(movies)
+
+        print_summary(movies)
+
+    except Exception as error:
+
+        print()
+        print("=" * 60)
+        print("❌ ERROR")
+        print("=" * 60)
+
+        print()
+        print(error)
+
+        print()
+        print("If you see an error above, send me the")
+        print("ENTIRE error message.")
+        print()
+
+
+if __name__ == "__main__":
+    main()
