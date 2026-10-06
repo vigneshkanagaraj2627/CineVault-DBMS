@@ -1,0 +1,4 @@
+customtkinter==5.2.2
+Pillow==10.4.0
+pymongo==4.17.0
+bcrypt==4.2.1
